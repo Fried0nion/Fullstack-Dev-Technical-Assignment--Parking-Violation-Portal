@@ -1,0 +1,35 @@
+# Parking Violation Portal — Requirements
+# This is a Go + Node project, not Python, so there's no pip requirements.txt.
+# This file lists everything you need to install to build/run it.
+
+## Tools to install (not libraries — install these yourself)
+go>=1.21              # https://go.dev/dl/
+node>=18              # https://nodejs.org/  (needed starting Task 7, frontend)
+sqlite3               # CLI, optional — only for inspecting portal.db manually
+                       #   winget install SQLite.SQLite   (Windows)
+                       #   brew install sqlite             (macOS)
+                       #   apt install sqlite3             (Linux)
+make                  # optional — every Makefile target has a raw `go`/`sqlite3` equivalent
+                       #   choco install make   OR use Git Bash / WSL   (Windows)
+
+# No C compiler needed. This project deliberately uses a pure-Go SQLite
+# driver (modernc.org/sqlite) instead of mattn/go-sqlite3 to avoid cgo.
+
+## Go module dependencies (from go.mod — installed automatically via `go mod tidy`)
+golang.org/x/crypto==v0.24.0     # bcrypt password hashing
+modernc.org/sqlite==v1.30.1      # pure-Go SQLite driver
+
+## Go dependencies to be added in later tasks (not yet in go.mod)
+github.com/golang-jwt/jwt/v5     # Task 2 — JWT issuing/validation
+                                  # (or: chi router, if we move off net/http's ServeMux — optional)
+
+## Frontend dependencies (Task 7 — installed via `npm install` inside frontend/)
+next
+react
+react-dom
+typescript
+# exact versions will be pinned once `npx create-next-app` scaffolds package.json
+
+## How to install everything (once tools above are present)
+#   go mod tidy              # pulls the two Go deps above
+#   cd frontend && npm install   # (Task 7 onward)
