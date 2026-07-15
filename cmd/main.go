@@ -6,6 +6,7 @@ import (
 
 	"parking-portal/internal/auth"
 	"parking-portal/internal/db"
+	"parking-portal/internal/rules"
 )
 
 func main() {
@@ -18,11 +19,19 @@ func main() {
 	log.Println("DB ready")
 
 	authService := auth.NewService(conn)
+	rulesService := rules.NewService(conn)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/login", authService.LoginHandler)
 
-	// NOTE: remaining HTTP routes (rules, violations, fines, payments, users)
+	// /rules — officer-only, behind JWT auth + role guard.
+	rulesHandler := rulesService.Handler(func(r *http.Request) (int, error) {
+		userID, _, err := auth.UserFromContext(r.Context())
+		return userID, err
+	})
+	mux.Handle("/rules", auth.Middleware(auth.RequireRole("officer")(http.HandlerFunc(rulesHandler))))
+
+	// NOTE: remaining HTTP routes (violations, fines, payments, users)
 	// are wired here in later tasks.
 
 	addr := ":8080"
