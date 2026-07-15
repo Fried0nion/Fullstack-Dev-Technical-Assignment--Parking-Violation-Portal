@@ -16,8 +16,8 @@ Local-only demo. Single Go backend (SQLite, no DB server) + Next.js frontend (fr
 - [x] **Task 4 — `internal/violations` + `internal/fines`: violation submission + fine calculation**
   Officer submits a violation (multipart: plate, type, location, timestamp, optional photo); photo saved to `./uploads/{uuid}.{ext}`. Fine calculated synchronously against the active rule version — base amount, day/night time multiplier (handles a night window that wraps past midnight), and a repeat-offense multiplier (based on unpaid violations for the same plate in the last 90 days) — then snapshotted onto an immutable invoice row. Routes: `POST /violations` (officer-only), `GET /violations` (officers see all, members see only their plate), `GET /violations/{id}`.
 
-- [ ] **Task 5 — `internal/users`: member profile + balance**
-  `GET /users/me`, `PATCH /users/me` (update plate), `GET /users/me/balance`. `users.Service.DeductBalance(userID, amount)` exported for the payments package, returns typed `ErrInsufficientBalance` on failure, uses a race-safe conditional `UPDATE`.
+- [x] **Task 5 — `internal/users`: member profile + balance**
+  `GET /users/me`, `PATCH /users/me` (update plate), `GET /users/me/balance`. `users.Service.DeductBalance(userID, amount)` exported for the payments package, returns typed `ErrInsufficientBalance` on failure, uses a race-safe conditional `UPDATE`. `users.Service.RefundBalance(userID, amount)` used by payments to roll back a deduction on provider failure.
 
 - [ ] **Task 6 — `internal/payments`: mocked payment flow**
   `POST /payments` (member-only): validates invoice ownership/status, deducts balance, runs a mocked success/failed charge. Insufficient balance (402) and mock provider failure (invoice → `failed`, balance rolled back) are distinct, explicit outcomes. `GET /payments` lists a member's payment history.

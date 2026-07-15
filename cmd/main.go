@@ -8,6 +8,7 @@ import (
 	"parking-portal/internal/db"
 	"parking-portal/internal/fines"
 	"parking-portal/internal/rules"
+	"parking-portal/internal/users"
 	"parking-portal/internal/violations"
 )
 
@@ -24,6 +25,13 @@ func main() {
 	rulesService := rules.NewService(conn)
 	finesService := fines.NewService(conn)
 	violationsService := violations.NewService(conn, rulesService, finesService, "./uploads")
+	usersService := users.NewService(conn)
+
+	// userFromContext is the closure all handlers use to extract the
+	// JWT-identified user from the request context (injected by auth.Middleware).
+	userFromContext := func(r *http.Request) (int, string, error) {
+		return auth.UserFromContext(r.Context())
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/login", authService.LoginHandler)
@@ -38,14 +46,16 @@ func main() {
 	// /violations, /violations/{id} — any authenticated user (officer
 	// or member); role-based scoping (submit is officer-only, list/detail
 	// are filtered by plate for members) happens inside the handler.
-	violationsHandler := violationsService.Router(func(r *http.Request) (int, string, error) {
-		return auth.UserFromContext(r.Context())
-	})
+	violationsHandler := violationsService.Router(userFromContext)
 	mux.Handle("/violations", auth.Middleware(violationsHandler))
 	mux.Handle("/violations/", auth.Middleware(violationsHandler))
 
-	// NOTE: remaining HTTP routes (payments, users) are wired here in
-	// later tasks.
+	// /users/me, /users/me/balance — any authenticated user.
+	usersHandler := usersService.Router(userFromContext)
+	mux.Handle("/users/me", auth.Middleware(usersHandler))
+	mux.Handle("/users/me/balance", auth.Middleware(usersHandler))
+
+	// NOTE: /payments routes are wired here in Task 6.
 
 	addr := ":8080"
 	log.Printf("listening on %s", addr)
