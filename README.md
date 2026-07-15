@@ -13,8 +13,8 @@ Local-only demo. Single Go backend (SQLite, no DB server) + Next.js frontend (fr
 - [x] **Task 3 — `internal/rules`: rule version management**
   Officers list all rule versions and publish new ones. `rules.Service.GetActive()` is a plain Go function used internally by the violations/fines flow, never exposed over HTTP. Routes: `GET /rules`, `POST /rules` (officer-only, behind JWT + role guard).
 
-- [ ] **Task 4 — `internal/violations` + `internal/fines`: violation submission + fine calculation**
-  Officer submits a violation (multipart: plate, type, location, timestamp, photo); photo saved to `./uploads/`. Fine calculated synchronously against the active rule version (base amount, time multiplier, repeat multiplier) and snapshotted onto an immutable invoice row. Routes: `POST /violations`, `GET /violations`, `GET /violations/:id`.
+- [x] **Task 4 — `internal/violations` + `internal/fines`: violation submission + fine calculation**
+  Officer submits a violation (multipart: plate, type, location, timestamp, optional photo); photo saved to `./uploads/{uuid}.{ext}`. Fine calculated synchronously against the active rule version — base amount, day/night time multiplier (handles a night window that wraps past midnight), and a repeat-offense multiplier (based on unpaid violations for the same plate in the last 90 days) — then snapshotted onto an immutable invoice row. Routes: `POST /violations` (officer-only), `GET /violations` (officers see all, members see only their plate), `GET /violations/{id}`.
 
 - [ ] **Task 5 — `internal/users`: member profile + balance**
   `GET /users/me`, `PATCH /users/me` (update plate), `GET /users/me/balance`. `users.Service.DeductBalance(userID, amount)` exported for the payments package, returns typed `ErrInsufficientBalance` on failure, uses a race-safe conditional `UPDATE`.
@@ -92,7 +92,23 @@ Publishes a new active rule version. Re-run the `GET /rules` above — the new r
 
 Trying `/rules` with a member token, no token, or a garbage token correctly returns 403 / 401 / 401 respectively.
 
+## Try it (Task 4)
+
+```
+curl -X POST localhost:8080/violations -H "Authorization: Bearer <officer token>" \
+  -F plate=B1234XYZ -F violation_type=illegal_parking \
+  -F location="Jl. Merdeka" -F timestamp=2026-07-15T23:30
+```
+Returns the created violation + invoice in one response. A night-time timestamp (falls in the 22→6 window) gives `time_multiplier: 1.5`; a daytime one gives `1.0`. The photo field (`-F photo=@/path/to/file.jpg`) is optional.
+
+Submit a second violation for the same plate while the first invoice is still `pending` (unpaid) — the new invoice's `repeat_multiplier` picks up the next tier from the active rule's `repeat_multipliers` (e.g. `1.5` for the 2nd offense).
+
+```
+curl -s localhost:8080/violations -H "Authorization: Bearer <officer token>"
+```
+Officers see every violation; a member token instead only returns violations matching the plate on their profile.
+
 ## Notes
 
 - `portal.db` and `uploads/` are gitignored — delete `portal.db` any time to reset local state, then re-run `make run && make seed`.
-- Remaining HTTP routes (violations, fines, payments, users) get wired into `cmd/main.go` in later tasks.
+- Remaining HTTP routes (payments, users) get wired into `cmd/main.go` in later tasks.
