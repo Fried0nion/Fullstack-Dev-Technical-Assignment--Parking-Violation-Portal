@@ -10,7 +10,7 @@ Local-only demo. Single Go backend (SQLite, no DB server) + Next.js frontend (fr
 - [x] **Task 2 — `internal/auth`: login + JWT middleware**
   `POST /auth/login` verifies email/password against `users` (bcrypt) and returns a signed JWT (`{sub, role, exp}`, 24h expiry, HS256, hand-rolled with stdlib `crypto/hmac` — no third-party JWT dependency). `auth.Middleware` validates the Bearer token and injects user id + role into the request context; `auth.RequireRole(role)` is the 403 role guard for later officer-only/member-only routes. `cmd/main.go` now runs a real HTTP server on `:8080`.
 
-- [ ] **Task 3 — `internal/rules`: rule version management**
+- [x] **Task 3 — `internal/rules`: rule version management**
   Officers list all rule versions and publish new ones. `rules.Service.GetActive()` is a plain Go function used internally by the violations/fines flow, never exposed over HTTP. Routes: `GET /rules`, `POST /rules` (officer-only, behind JWT + role guard).
 
 - [ ] **Task 4 — `internal/violations` + `internal/fines`: violation submission + fine calculation**
@@ -69,14 +69,30 @@ make seed      # inserts seeded officer/member + day-one rule
 
 Member starts with a balance of 2,000,000 (IDR) and plate `B1234XYZ`.
 
-## Try it (Task 2)
+## Try it (Tasks 2 & 3)
 
 ```
 curl -X POST localhost:8080/auth/login -d '{"email":"officer@portal.com","password":"officer123"}'
 ```
 Returns `{"token": "..."}` — decode the middle (base64url) segment to see `{"sub":1,"role":"officer","exp":...}`.
 
+```
+curl -s localhost:8080/rules -H "Authorization: Bearer <officer token>"
+```
+Returns the seeded day-one rule with `"is_active": true`.
+
+```
+curl -s -X POST localhost:8080/rules -H "Authorization: Bearer <officer token>" -d '{
+  "base_amounts": {"illegal_parking": 120000},
+  "time_multipliers": {"day": 1.0, "night": 1.5, "night_start_hour": 22, "night_end_hour": 6},
+  "repeat_multipliers": {"1": 1.5, "2": 2.0}
+}'
+```
+Publishes a new active rule version. Re-run the `GET /rules` above — the new rule is `is_active: true`, the old one flips to `false`. Existing invoices keep their original `rule_version_id` snapshot and are never retroactively changed.
+
+Trying `/rules` with a member token, no token, or a garbage token correctly returns 403 / 401 / 401 respectively.
+
 ## Notes
 
 - `portal.db` and `uploads/` are gitignored — delete `portal.db` any time to reset local state, then re-run `make run && make seed`.
-- Remaining HTTP routes (rules, violations, fines, payments, users) get wired into `cmd/main.go` in later tasks.
+- Remaining HTTP routes (violations, fines, payments, users) get wired into `cmd/main.go` in later tasks.
