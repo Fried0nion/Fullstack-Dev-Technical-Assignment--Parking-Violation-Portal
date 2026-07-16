@@ -121,13 +121,24 @@ The backend is now running at **http://localhost:8080**
 
 ### 3. Seed Initial Data
 
-In a **new terminal**, run:
+In a **new terminal**, choose one of the following options:
 
+**Option A: Using Make** (recommended)
 ```bash
 make seed
 ```
 
-This creates:
+**Option B: Using Go directly**
+```bash
+go run ./scripts/seed
+```
+
+**Option C: Using pre-compiled binary** (if available, haven't tested)
+```bash
+./seed.exe
+```
+
+Any of these creates:
 - One officer account
 - One member account
 - A sample parking rule
@@ -223,11 +234,17 @@ go run ./cmd
 # Run frontend (from frontend/ directory)
 npm run dev
 
-# Seed data
-go run ./scripts/seed
+# Seed data - choose one option:
+go run ./scripts/seed    # Using Go
+./seed.exe               # Using pre-compiled binary (if available)
 
 # Check tables
 sqlite3 portal.db ".tables"
+```
+
+**Note**: The `seed.exe` binary is a pre-compiled version of the seeder. If it doesn't exist, use `go run ./scripts/seed` instead. To create the binary for future use:
+```bash
+go build ./scripts/seed -o seed.exe
 ```
 
 ---
