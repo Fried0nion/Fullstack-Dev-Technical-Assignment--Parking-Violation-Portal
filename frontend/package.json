@@ -1,0 +1,29 @@
+{
+  "name": "parking-portal-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15.5.20",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
+    "@eslint/js": "^10.0.1",
+    "@next/eslint-plugin-next": "^16.2.10",
+    "@types/node": "^20.14.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "eslint": "^10.7.0",
+    "eslint-config-next": "^16.2.10",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript": "^5.5.2",
+    "typescript-eslint": "^8.64.0"
+  }
+}

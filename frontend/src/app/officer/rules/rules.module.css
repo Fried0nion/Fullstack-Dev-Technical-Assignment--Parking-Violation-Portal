@@ -1,0 +1,28 @@
+.row4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0 1rem;
+}
+
+@media (max-width: 600px) {
+  .row4 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.kvItem {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.88rem;
+}
+
+.kvItem span:first-child {
+  width: 160px;
+  flex-shrink: 0;
+}
