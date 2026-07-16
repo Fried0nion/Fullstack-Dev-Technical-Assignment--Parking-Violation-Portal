@@ -19,7 +19,7 @@ Local-only demo. Single Go backend (SQLite, no DB server) + Next.js frontend (fr
 - [x] **Task 5 — `internal/users`: member profile + balance**
   `GET /users/me`, `PATCH /users/me` (update plate), `GET /users/me/balance`. `users.Service.DeductBalance(userID, amount)` exported for the payments package, returns typed `ErrInsufficientBalance` on failure, uses a race-safe conditional `UPDATE`. `users.Service.RefundBalance(userID, amount)` used by payments to roll back a deduction on provider failure.
 
-- [ ] **Task 6 — `internal/payments`: mocked payment flow**
+- [x] **Task 6 — `internal/payments`: mocked payment flow**
   `POST /payments` (member-only): validates invoice ownership/status, deducts balance, runs a mocked success/failed charge. Insufficient balance (402) and mock provider failure (invoice → `failed`, balance rolled back) are distinct, explicit outcomes. `GET /payments` lists a member's payment history.
 
 - [ ] **Task 7 — Frontend: Next.js + TypeScript**
@@ -108,7 +108,28 @@ curl -s localhost:8080/violations -H "Authorization: Bearer <officer token>"
 ```
 Officers see every violation; a member token instead only returns violations matching the plate on their profile.
 
+## Try it (Task 6)
+
+```
+curl -X POST localhost:8080/payments -H "Authorization: Bearer <member token>" -d '{
+  "invoice_id": 2,
+  "scenario": "success"
+}'
+```
+Returns `{"status":"paid","transaction_id":"..."}`; the invoice flips to `paid` and the member's balance drops by the fine amount.
+
+Re-running the same call returns `409 Conflict` (`"invoice is not pending"`) — an invoice can only be paid once.
+
+Same call with `"scenario": "failed"` instead rolls the balance deduction back, marks the invoice `failed`, and still records the attempt in `payments`.
+
+If the member's balance can't cover the fine, the deduction step returns `402 Payment Required` before the mock provider is ever called — the invoice stays `pending` and no payment row is inserted.
+
+```
+curl -s localhost:8080/payments -H "Authorization: Bearer <member token>"
+```
+Lists the current member's own payment history.
+
 ## Notes
 
 - `portal.db` and `uploads/` are gitignored — delete `portal.db` any time to reset local state, then re-run `make run && make seed`.
-- Remaining HTTP routes (payments, users) get wired into `cmd/main.go` in later tasks.
+- All backend routes (auth, rules, violations, users, payments) are now wired into `cmd/main.go`. Only the frontend (Task 7) and final docs/Makefile polish (Task 8) remain.

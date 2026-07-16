@@ -7,6 +7,7 @@ import (
 	"parking-portal/internal/auth"
 	"parking-portal/internal/db"
 	"parking-portal/internal/fines"
+	"parking-portal/internal/payments"
 	"parking-portal/internal/rules"
 	"parking-portal/internal/users"
 	"parking-portal/internal/violations"
@@ -26,6 +27,7 @@ func main() {
 	finesService := fines.NewService(conn)
 	violationsService := violations.NewService(conn, rulesService, finesService, "./uploads")
 	usersService := users.NewService(conn)
+	paymentsService := payments.NewService(conn, finesService, usersService)
 
 	// userFromContext is the closure all handlers use to extract the
 	// JWT-identified user from the request context (injected by auth.Middleware).
@@ -55,7 +57,9 @@ func main() {
 	mux.Handle("/users/me", auth.Middleware(usersHandler))
 	mux.Handle("/users/me/balance", auth.Middleware(usersHandler))
 
-	// NOTE: /payments routes are wired here in Task 6.
+	// /payments — member-only, behind JWT auth + role guard.
+	paymentsHandler := paymentsService.Router(userFromContext)
+	mux.Handle("/payments", auth.Middleware(auth.RequireRole("member")(paymentsHandler)))
 
 	addr := ":8080"
 	log.Printf("listening on %s", addr)
