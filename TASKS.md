@@ -1,7 +1,7 @@
 ## Tasks
 
 - [x] **Task 1 — Project scaffold + SQLite schema**
-  Go module scaffold with one internal package per domain (`auth`, `users`, `rules`, `violations`, `fines`, `payments`). `internal/db` opens `portal.db` and applies `schema.sql` (all 5 tables) on every startup via `CREATE TABLE IF NOT EXISTS`. `scripts/gen_hash` prints a bcrypt hash for a given password. `scripts/seed.sql` seeds officer + member accounts and the day-one rule version, passwords already bcrypt-hashed. Makefile: `setup`, `seed`, `run`, etc.
+  Go module scaffold with one internal package per domain (`auth`, `users`, `rules`, `violations`, `fines`, `payments`). `internal/db` opens `portal.db` and applies `schema.sql` (all 5 tables) on every startup via `CREATE TABLE IF NOT EXISTS`. `scripts/seed` seeds officer + member accounts and the day-one rule version with inline bcrypt hashing. Makefile: `setup`, `seed`, `run`, etc.
 
 - [x] **Task 2 — `internal/auth`: login + JWT middleware**
   `POST /auth/login` verifies email/password against `users` (bcrypt) and returns a signed JWT (`{sub, role, exp}`, 24h expiry, HS256, hand-rolled with stdlib `crypto/hmac` — no third-party JWT dependency). `auth.Middleware` validates the Bearer token and injects user id + role into the request context; `auth.RequireRole(role)` is the 403 role guard for later officer-only/member-only routes. `cmd/main.go` now runs a real HTTP server on `:8080`.
