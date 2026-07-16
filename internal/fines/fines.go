@@ -101,18 +101,25 @@ func (s *Service) Calculate(plate string, violationType string, ts time.Time, ru
 // timeMultiplierFor returns the day or night multiplier for the hour of
 // ts, handling a night window that wraps past midnight (e.g. 22 -> 6).
 func timeMultiplierFor(ts time.Time, tm rules.TimeMultipliers) float64 {
-	hour := ts.Hour()
-	start, end := tm.NightStartHour, tm.NightEndHour
+	tsMinutes := ts.Hour()*60 + ts.Minute()
+	start, err := tm.NightStartHour.MinutesSinceMidnight()
+	if err != nil {
+		return tm.Day
+	}
+	end, err := tm.NightEndHour.MinutesSinceMidnight()
+	if err != nil {
+		return tm.Day
+	}
 
 	var isNight bool
 	switch {
 	case start == end:
 		isNight = false
 	case start < end:
-		isNight = hour >= start && hour < end
+		isNight = tsMinutes >= start && tsMinutes < end
 	default:
 		// Wraps past midnight, e.g. 22 -> 6.
-		isNight = hour >= start || hour < end
+		isNight = tsMinutes >= start || tsMinutes < end
 	}
 
 	if isNight {
@@ -192,6 +199,26 @@ func (s *Service) CreateInvoice(violationID int, calc *Invoice) (*Invoice, error
 	}
 
 	return s.GetInvoice(int(id))
+}
+
+// CreateInvoiceTx persists an invoice inside an existing transaction.
+func (s *Service) CreateInvoiceTx(tx *sql.Tx, violationID int, calc *Invoice) (*Invoice, error) {
+	res, err := tx.Exec(
+		`INSERT INTO invoices (violation_id, rule_version_id, base_amount, time_multiplier, repeat_multiplier, fine_amount, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		violationID, calc.RuleVersionID, calc.BaseAmount, calc.TimeMultiplier, calc.RepeatMultiplier, calc.FineAmount, calc.Status,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+
+	row := tx.QueryRow(`SELECT `+invoiceColumns+` FROM invoices WHERE id = ?`, id)
+	return scanInvoice(row.Scan)
 }
 
 // GetInvoice fetches a single invoice by id.

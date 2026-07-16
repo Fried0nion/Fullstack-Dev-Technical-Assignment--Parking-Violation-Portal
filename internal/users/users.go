@@ -42,6 +42,11 @@ type UpdatePlateRequest struct {
 	Plate string `json:"plate"`
 }
 
+// AddBalanceRequest is the body for PATCH /users/me/balance.
+type AddBalanceRequest struct {
+	Amount int `json:"amount"`
+}
+
 // ContextUser extracts the authenticated user's id and role from the
 // request — same pattern used by violations and rules packages.
 type ContextUser func(r *http.Request) (userID int, role string, err error)
@@ -60,6 +65,14 @@ func NewService(db *sql.DB) *Service {
 func (s *Service) GetByID(id int) (*User, error) {
 	row := s.db.QueryRow(
 		`SELECT id, email, role, plate, balance, created_at FROM users WHERE id = ?`, id,
+	)
+	return scanUser(row.Scan)
+}
+
+// GetByPlate fetches a single user by their registered plate number.
+func (s *Service) GetByPlate(plate string) (*User, error) {
+	row := s.db.QueryRow(
+		`SELECT id, email, role, plate, balance, created_at FROM users WHERE plate = ?`, plate,
 	)
 	return scanUser(row.Scan)
 }
@@ -247,6 +260,66 @@ func (s *Service) BalanceHandler(userFromContext ContextUser) http.HandlerFunc {
 	}
 }
 
+// AddBalanceHandler handles PATCH /users/me/balance — lets a member
+// add funds to their own account balance.
+func (s *Service) AddBalanceHandler(userFromContext ContextUser) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+
+		userID, role, err := userFromContext(r)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "no authenticated user")
+			return
+		}
+		if role != "member" {
+			writeError(w, http.StatusForbidden, "only members can add balance")
+			return
+		}
+
+		var req AddBalanceRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.Amount <= 0 {
+			writeError(w, http.StatusBadRequest, "amount must be greater than zero")
+			return
+		}
+
+		if err := s.AddBalance(userID, req.Amount); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to add balance")
+			return
+		}
+
+		user, err := s.GetByID(userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "balance updated but could not reload profile")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, BalanceResponse{Balance: user.Balance})
+	}
+}
+
+// AddBalance adds funds to a user's balance.
+func (s *Service) AddBalance(userID int, amount int) error {
+	res, err := s.db.Exec(`UPDATE users SET balance = balance + ? WHERE id = ?`, amount, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
 // Router dispatches the /users/me and /users/me/balance routes.
 // All routes require an authenticated user (caller wraps with
 // auth.Middleware before registering in main.go).
@@ -254,6 +327,7 @@ func (s *Service) Router(userFromContext ContextUser) http.Handler {
 	me := s.MeHandler(userFromContext)
 	updatePlate := s.UpdatePlateHandler(userFromContext)
 	balance := s.BalanceHandler(userFromContext)
+	addBalance := s.AddBalanceHandler(userFromContext)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -267,7 +341,14 @@ func (s *Service) Router(userFromContext ContextUser) http.Handler {
 				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			}
 		case "/users/me/balance":
-			balance(w, r)
+			switch r.Method {
+			case http.MethodGet:
+				balance(w, r)
+			case http.MethodPatch:
+				addBalance(w, r)
+			default:
+				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			}
 		default:
 			writeError(w, http.StatusNotFound, "not found")
 		}

@@ -16,3 +16,11 @@
 .dl dd {
   color: var(--text);
 }
+
+.timestampInput {
+  color-scheme: dark;
+}
+
+.timestampInput::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}

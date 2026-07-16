@@ -21,6 +21,7 @@ import (
 
 	"parking-portal/internal/fines"
 	"parking-portal/internal/rules"
+	"parking-portal/internal/users"
 )
 
 // ErrNotFound is returned when a violation id doesn't exist.
@@ -40,6 +41,7 @@ type Violation struct {
 	Timestamp     time.Time `json:"timestamp"`
 	PhotoPath     *string   `json:"photo_path,omitempty"`
 	SubmittedBy   int       `json:"submitted_by"`
+	InvoiceStatus string    `json:"invoice_status,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -57,14 +59,15 @@ type Service struct {
 	db         *sql.DB
 	rules      *rules.Service
 	fines      *fines.Service
+	users      *users.Service
 	uploadsDir string
 }
 
-func NewService(db *sql.DB, rulesSvc *rules.Service, finesSvc *fines.Service, uploadsDir string) *Service {
+func NewService(db *sql.DB, rulesSvc *rules.Service, finesSvc *fines.Service, usersSvc *users.Service, uploadsDir string) *Service {
 	if uploadsDir == "" {
 		uploadsDir = "./uploads"
 	}
-	return &Service{db: db, rules: rulesSvc, fines: finesSvc, uploadsDir: uploadsDir}
+	return &Service{db: db, rules: rulesSvc, fines: finesSvc, users: usersSvc, uploadsDir: uploadsDir}
 }
 
 // acceptedTimestampLayouts covers the formats we expect from curl
@@ -123,24 +126,27 @@ func (s *Service) SubmitHandler(userFromContext ContextUser) http.HandlerFunc {
 			return
 		}
 
-		var photoPath *string
+		var (
+			photoPath *string
+			photoFile io.ReadCloser
+			photoName string
+		)
 		if file, header, ferr := r.FormFile("photo"); ferr == nil {
-			defer file.Close()
-			savedPath, saveErr := s.savePhoto(file, header.Filename)
-			if saveErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to save photo")
-				return
-			}
-			photoPath = &savedPath
+			photoFile = file
+			photoName = header.Filename
 		} else if !errors.Is(ferr, http.ErrMissingFile) {
 			writeError(w, http.StatusBadRequest, "invalid photo upload")
 			return
 		}
 
-		// Insert the violation row. If the invoice steps below fail, the
-		// photo file (if any) is left orphaned on disk — a documented
-		// trade-off, not handled here.
-		res, err := s.db.Exec(
+		tx, err := s.db.Begin()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save violation")
+			return
+		}
+		defer tx.Rollback()
+
+		res, err := tx.Exec(
 			`INSERT INTO violations (plate, violation_type, location, timestamp, photo_path, submitted_by)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
 			plate, violationType, location, ts, nullableString(photoPath), submittedBy,
@@ -168,9 +174,24 @@ func (s *Service) SubmitHandler(userFromContext ContextUser) http.HandlerFunc {
 			return
 		}
 
-		invoice, err := s.fines.CreateInvoice(violationID, calc)
+		if photoFile != nil {
+			defer photoFile.Close()
+			savedPath, saveErr := s.savePhoto(photoFile, photoName)
+			if saveErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to save photo")
+				return
+			}
+			photoPath = &savedPath
+		}
+
+		invoice, err := s.fines.CreateInvoiceTx(tx, violationID, calc)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create invoice")
+			return
+		}
+
+		if err := tx.Commit(); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save violation")
 			return
 		}
 
@@ -215,20 +236,22 @@ func nullableString(s *string) any {
 	return *s
 }
 
-const violationColumns = `id, plate, violation_type, location, timestamp, photo_path, submitted_by, created_at`
+const violationColumns = `id, plate, violation_type, location, timestamp, photo_path, submitted_by, COALESCE((SELECT status FROM invoices WHERE violation_id = violations.id LIMIT 1), 'pending') AS invoice_status, created_at`
 
 func scanViolation(scan func(dest ...any) error) (*Violation, error) {
 	var (
 		v         Violation
 		photoPath sql.NullString
+		status    string
 	)
 	if err := scan(&v.ID, &v.Plate, &v.ViolationType, &v.Location, &v.Timestamp,
-		&photoPath, &v.SubmittedBy, &v.CreatedAt); err != nil {
+		&photoPath, &v.SubmittedBy, &status, &v.CreatedAt); err != nil {
 		return nil, err
 	}
 	if photoPath.Valid {
 		v.PhotoPath = &photoPath.String
 	}
+	v.InvoiceStatus = status
 	return &v, nil
 }
 
@@ -340,10 +363,24 @@ func (s *Service) DetailHandler(userFromContext ContextUser, id int) http.Handle
 			return
 		}
 
+		officer, err := s.users.GetByID(violation.SubmittedBy)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load officer profile")
+			return
+		}
+
+		member, err := s.users.GetByPlate(violation.Plate)
+		if err != nil && !errors.Is(err, users.ErrUserNotFound) {
+			writeError(w, http.StatusInternalServerError, "failed to load member profile")
+			return
+		}
+
 		resp := struct {
 			Violation Violation      `json:"violation"`
 			Invoice   *fines.Invoice `json:"invoice,omitempty"`
-		}{Violation: *violation, Invoice: invoice}
+			Officer   *users.User    `json:"officer,omitempty"`
+			Member    *users.User    `json:"member,omitempty"`
+		}{Violation: *violation, Invoice: invoice, Officer: officer, Member: member}
 
 		writeJSON(w, http.StatusOK, resp)
 	}

@@ -147,7 +147,13 @@ func (s *Service) PayHandler(userFromContext ContextUser) http.HandlerFunc {
 			return
 		}
 
-		if invoice.Status != "pending" {
+		if invoice.Status == "failed" {
+			if err := s.fines.UpdateInvoiceStatus(invoice.ID, "pending"); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to reset invoice status")
+				return
+			}
+			invoice.Status = "pending"
+		} else if invoice.Status != "pending" {
 			writeError(w, http.StatusConflict, "invoice is not pending")
 			return
 		}

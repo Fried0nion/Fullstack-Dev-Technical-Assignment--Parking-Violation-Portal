@@ -13,6 +13,7 @@ import type {
   Payment,
   PayResponse,
   RuleVersion,
+  RuleActivationResponse,
   SubmitViolationResponse,
   User,
   ViolationDetail,
@@ -86,6 +87,15 @@ export async function getBalance(): Promise<BalanceResponse> {
   return handleResponse<BalanceResponse>(res);
 }
 
+export async function addBalance(amount: number): Promise<BalanceResponse> {
+  const res = await fetch(`${BASE}/users/me/balance`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ amount }),
+  });
+  return handleResponse<BalanceResponse>(res);
+}
+
 // ── rules ────────────────────────────────────────────────────────────────────
 
 export async function listRules(): Promise<RuleVersion[]> {
@@ -100,8 +110,8 @@ export interface PublishRulePayload {
   time_multipliers: {
     day: number;
     night: number;
-    night_start_hour: number;
-    night_end_hour: number;
+    night_start_hour: string;
+    night_end_hour: string;
   };
   repeat_multipliers: Record<string, number>;
 }
@@ -113,6 +123,33 @@ export async function publishRule(payload: PublishRulePayload): Promise<RuleVers
     body: JSON.stringify(payload),
   });
   return handleResponse<RuleVersion>(res);
+}
+
+export async function deleteRuleVersion(versionId: number): Promise<void> {
+  const res = await fetch(`${BASE}/rules/${versionId}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      // ignore parse errors
+    }
+    const err = new Error(msg);
+    (err as Error & { status: number }).status = res.status;
+    throw err;
+  }
+}
+
+export async function activateRuleVersion(versionId: number): Promise<RuleActivationResponse> {
+  const res = await fetch(`${BASE}/rules/${versionId}/activate`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+  });
+  return handleResponse<RuleActivationResponse>(res);
 }
 
 // ── violations ───────────────────────────────────────────────────────────────

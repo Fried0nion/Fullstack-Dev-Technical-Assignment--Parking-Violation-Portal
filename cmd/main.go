@@ -25,8 +25,8 @@ func main() {
 	authService := auth.NewService(conn)
 	rulesService := rules.NewService(conn)
 	finesService := fines.NewService(conn)
-	violationsService := violations.NewService(conn, rulesService, finesService, "./uploads")
 	usersService := users.NewService(conn)
+	violationsService := violations.NewService(conn, rulesService, finesService, usersService, "./uploads")
 	paymentsService := payments.NewService(conn, finesService, usersService)
 
 	// userFromContext is the closure all handlers use to extract the
@@ -44,6 +44,7 @@ func main() {
 		return userID, err
 	})
 	mux.Handle("/rules", auth.Middleware(auth.RequireRole("officer")(http.HandlerFunc(rulesHandler))))
+	mux.Handle("/rules/", auth.Middleware(auth.RequireRole("officer")(http.HandlerFunc(rulesHandler))))
 
 	// /violations, /violations/{id} — any authenticated user (officer
 	// or member); role-based scoping (submit is officer-only, list/detail
@@ -60,6 +61,8 @@ func main() {
 	// /payments — member-only, behind JWT auth + role guard.
 	paymentsHandler := paymentsService.Router(userFromContext)
 	mux.Handle("/payments", auth.Middleware(auth.RequireRole("member")(paymentsHandler)))
+
+	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 
 	addr := ":8080"
 	log.Printf("listening on %s", addr)

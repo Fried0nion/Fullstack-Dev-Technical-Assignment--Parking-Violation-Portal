@@ -14,6 +14,13 @@ function formatIDR(amount: number) {
   }).format(amount);
 }
 
+function photoUrl(photoPath?: string | null) {
+  if (!photoPath) return null;
+  const normalized = photoPath.replace(/^\\+|^\/+/, "");
+  const filename = normalized.split(/[\\/]/).pop();
+  return filename ? `/uploads/${filename}` : null;
+}
+
 export default function OfficerViolationsPage() {
   return (
     <ProtectedRoute role="officer">
@@ -75,6 +82,7 @@ function ViolationsList() {
                 <th>Type</th>
                 <th>Location</th>
                 <th>Timestamp</th>
+                <th>Status</th>
                 <th>Detail</th>
               </tr>
             </thead>
@@ -86,6 +94,7 @@ function ViolationsList() {
                   <td>{v.violation_type}</td>
                   <td>{v.location}</td>
                   <td>{new Date(v.timestamp).toLocaleString()}</td>
+                  <td>{v.invoice_status ? <span className={`badge badge-${v.invoice_status}`}>{v.invoice_status}</span> : "pending"}</td>
                   <td>
                     <button
                       className="btn btn-secondary"
@@ -146,10 +155,19 @@ function DetailPanel({ detail, onClose }: { detail: ViolationDetail; onClose: ()
           <dt className="muted">Location</dt><dd>{v.location}</dd>
           <dt className="muted">Timestamp</dt><dd>{new Date(v.timestamp).toLocaleString()}</dd>
           <dt className="muted">Submitted by</dt><dd>User #{v.submitted_by}</dd>
-          {v.photo_path && (
-            <><dt className="muted">Photo</dt><dd style={{ wordBreak: "break-all" }}>{v.photo_path}</dd></>
-          )}
+          <dt className="muted">Status</dt><dd>{v.invoice_status ? <span className={`badge badge-${v.invoice_status}`}>{v.invoice_status}</span> : "pending"}</dd>
         </dl>
+
+        {photoUrl(v.photo_path) && (
+          <div style={{ marginTop: "1rem" }}>
+            <h3 style={{ fontSize: "0.9rem", marginBottom: "0.5rem" }}>Photo</h3>
+            <img
+              src={photoUrl(v.photo_path) ?? undefined}
+              alt={`Violation ${v.id}`}
+              style={{ width: "100%", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface2)" }}
+            />
+          </div>
+        )}
 
         {invoice && (
           <>

@@ -33,3 +33,21 @@ typescript
 ## How to install everything (once tools above are present)
 #   go mod tidy              # pulls the two Go deps above
 #   cd frontend && npm install   # (Task 7 onward)
+
+
+
+It adds rule version management for officers, including fixed violation types, editable amounts, 24-hour night windows, version activation, and deletion. It also hardens violation submission and billing by rejecting invalid rule data before database writes, using transactional invoice creation, and exposing invoice status in violation details.
+
+On the member side, the dashboard now supports balance top-up, plate updates, violation status tracking, retry payment links for failed invoices, and a ticket detail modal that shows uploaded images and invoice information. Officer-facing UI now includes a dedicated info page, simplified violation detail identity display, and proper upload rendering through backend uploads proxying.
+
+Detailed changes include:
+- Rule management now supports full version control in frontend/src/app/officer/rules/page.tsx and internal/rules/rules.go: officers can publish new versions, edit fixed violation amounts, use 24-hour time inputs for night windows, activate older versions, and delete unused versions.
+- Violation submission and billing were hardened in internal/violations/violations.go and internal/fines/fines.go: invalid rule values are rejected before insert, invoices are created transactionally, violation details include invoice status, and the fine calculation now uses clock-time windows.
+- Payment retry behavior was fixed in internal/payments/payments.go: failed invoices can be retried by resetting them back to pending before the next payment attempt.
+- Member account balance support was added in internal/users/users.go: the API now exposes member balance, allows members to add funds, and includes plate lookup support for downstream flows.
+- The backend routing and static upload serving were wired in cmd/main.go: /rules, /violations, /users/me/balance, /payments, and uploads are all mounted correctly.
+- Frontend API/types were extended in frontend/src/lib/api.ts and frontend/src/lib/types.ts: rule payloads now use string time values, invoice status is surfaced, and helper calls were added for balance top-up and rule version actions.
+- The member dashboard in frontend/src/app/member/dashboard/page.tsx now shows balance, supports add-balance, lets members edit their plate, lists violations with status badges, and opens a detail modal with photo and invoice info.
+- Officer-facing violation views in frontend/src/app/officer/violations/page.tsx now show uploaded photos and keep the detail view focused on the submitted-by identity only.
+- A dedicated officer profile page was added at frontend/src/app/officer/info/page.tsx, and the nav was updated in frontend/src/components/Nav.tsx to link to it.
+- Frontend image loading was fixed in frontend/next.config.ts by proxying /uploads/:path* to the Go backend.

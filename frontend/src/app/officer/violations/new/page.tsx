@@ -22,6 +22,13 @@ function localNow(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function photoUrl(photoPath?: string | null) {
+  if (!photoPath) return null;
+  const normalized = photoPath.replace(/^\\+|^\/+/, "");
+  const filename = normalized.split(/[\\/]/).pop();
+  return filename ? `/uploads/${filename}` : null;
+}
+
 export default function SubmitViolationPage() {
   return (
     <ProtectedRoute role="officer">
@@ -75,6 +82,16 @@ function SubmitViolationForm() {
             <dt>Location</dt><dd>{violation.location}</dd>
             <dt>Timestamp</dt><dd>{new Date(violation.timestamp).toLocaleString()}</dd>
           </dl>
+          {photoUrl(violation.photo_path) && (
+            <div style={{ marginTop: "1rem" }}>
+              <h3 style={{ marginBottom: "0.5rem" }}>Photo</h3>
+              <img
+                src={photoUrl(violation.photo_path) ?? undefined}
+                alt={`Violation ${violation.id}`}
+                style={{ width: "100%", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface2)" }}
+              />
+            </div>
+          )}
         </div>
 
         <div className="card" style={{ marginTop: "1rem" }}>
@@ -148,6 +165,7 @@ function SubmitViolationForm() {
             <input
               id="timestamp"
               type="datetime-local"
+                className={styles.timestampInput}
               value={timestamp}
               onChange={(e) => setTimestamp(e.target.value)}
               required

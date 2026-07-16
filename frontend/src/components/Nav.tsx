@@ -27,6 +27,7 @@ export default function Nav() {
             <Link href="/officer/violations">Violations</Link>
             <Link href="/officer/violations/new">Submit</Link>
             <Link href="/officer/rules">Rules</Link>
+            <Link href="/officer/info">Info</Link>
           </>
         ) : (
           <>

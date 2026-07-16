@@ -22,8 +22,8 @@ export interface RuleVersion {
   time_multipliers: {
     day: number;
     night: number;
-    night_start_hour: number;
-    night_end_hour: number;
+    night_start_hour: string;
+    night_end_hour: string;
   };
   repeat_multipliers: Record<string, number>;
 }
@@ -36,6 +36,7 @@ export interface Violation {
   timestamp: string;
   photo_path?: string;
   submitted_by: number;
+  invoice_status?: "pending" | "paid" | "failed";
   created_at: string;
 }
 
@@ -74,7 +75,11 @@ export interface PayResponse {
 export interface ViolationDetail {
   violation: Violation;
   invoice?: Invoice;
+  officer?: User;
+  member?: User;
 }
+
+export type RuleActivationResponse = RuleVersion;
 
 export interface ApiError {
   error: string;

@@ -8,7 +8,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,12 +19,97 @@ import (
 // currently marked active (should only happen before seeding).
 var ErrNoActiveRule = errors.New("no active rule version")
 
+// ErrRuleVersionNotFound is returned when a requested rule version id does not exist.
+var ErrRuleVersionNotFound = errors.New("rule version not found")
+
+// ErrActiveRuleVersion is returned when attempting to delete the active rule.
+var ErrActiveRuleVersion = errors.New("active rule version cannot be deleted")
+
+// RequiredViolationTypes defines the fixed violation keys the portal supports.
+var RequiredViolationTypes = []string{
+	"illegal_parking",
+	"no_helmet",
+	"speeding",
+	"red_light",
+	"wrong_way",
+}
+
+// ClockTime stores a 24-hour clock value as HH:MM in JSON while still
+// accepting the legacy integer hour format used by earlier rule versions.
+type ClockTime string
+
+func (ct *ClockTime) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		parsed, err := parseClockTime(text)
+		if err != nil {
+			return err
+		}
+		*ct = ClockTime(parsed)
+		return nil
+	}
+
+	var hour int
+	if err := json.Unmarshal(data, &hour); err == nil {
+		if hour < 0 || hour > 23 {
+			return fmt.Errorf("invalid clock hour %d", hour)
+		}
+		*ct = ClockTime(fmt.Sprintf("%02d:00", hour))
+		return nil
+	}
+
+	return errors.New("invalid clock time")
+}
+
+func (ct ClockTime) MarshalJSON() ([]byte, error) {
+	if ct == "" {
+		return json.Marshal("")
+	}
+	parsed, err := parseClockTime(string(ct))
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(parsed)
+}
+
+func (ct ClockTime) MinutesSinceMidnight() (int, error) {
+	parsed, err := parseClockTime(string(ct))
+	if err != nil {
+		return 0, err
+	}
+	parts := strings.Split(parsed, ":")
+	hour, _ := strconv.Atoi(parts[0])
+	minute, _ := strconv.Atoi(parts[1])
+	return hour*60 + minute, nil
+}
+
+func parseClockTime(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", errors.New("clock time is required")
+	}
+
+	if strings.Count(value, ":") == 0 {
+		hour, err := strconv.Atoi(value)
+		if err != nil || hour < 0 || hour > 23 {
+			return "", fmt.Errorf("invalid clock time %q", value)
+		}
+		return fmt.Sprintf("%02d:00", hour), nil
+	}
+
+	parsed, err := time.Parse("15:04", value)
+	if err != nil {
+		return "", fmt.Errorf("invalid clock time %q", value)
+	}
+	return parsed.Format("15:04"), nil
+}
+
 // TimeMultipliers describes the day/night fine multiplier window.
 type TimeMultipliers struct {
-	Day            float64 `json:"day"`
-	Night          float64 `json:"night"`
-	NightStartHour int     `json:"night_start_hour"`
-	NightEndHour   int     `json:"night_end_hour"`
+	Day            float64   `json:"day"`
+	Night          float64   `json:"night"`
+	NightStartHour ClockTime `json:"night_start_hour"`
+	NightEndHour   ClockTime `json:"night_end_hour"`
 }
 
 // RuleVersion mirrors a row in rule_versions, with the JSON columns
@@ -127,6 +215,10 @@ func (s *Service) List() ([]RuleVersion, error) {
 // active one, within a single transaction. Existing invoices reference
 // their rule_version_id snapshot and are never retroactively affected.
 func (s *Service) Publish(publishedBy int, payload PublishRequest) (*RuleVersion, error) {
+	if err := validatePublishRequest(payload); err != nil {
+		return nil, err
+	}
+
 	baseAmountsJSON, err := json.Marshal(payload.BaseAmounts)
 	if err != nil {
 		return nil, err
@@ -177,6 +269,76 @@ func (s *Service) Publish(publishedBy int, payload PublishRequest) (*RuleVersion
 	return rv, nil
 }
 
+// Activate marks the selected rule version active and deactivates all others.
+func (s *Service) Activate(versionID int) (*RuleVersion, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`UPDATE rule_versions SET is_active = 0`); err != nil {
+		return nil, err
+	}
+
+	res, err := tx.Exec(`UPDATE rule_versions SET is_active = 1 WHERE id = ?`, versionID)
+	if err != nil {
+		return nil, err
+	}
+	if rows, err := res.RowsAffected(); err != nil {
+		return nil, err
+	} else if rows == 0 {
+		return nil, ErrRuleVersionNotFound
+	}
+
+	row := tx.QueryRow(`SELECT `+ruleVersionColumns+` FROM rule_versions WHERE id = ?`, versionID)
+	rv, err := scanRuleVersion(row.Scan)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return rv, nil
+}
+
+// Delete removes an inactive rule version from the database.
+func (s *Service) Delete(versionID int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var active bool
+	err = tx.QueryRow(`SELECT is_active FROM rule_versions WHERE id = ?`, versionID).Scan(&active)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRuleVersionNotFound
+		}
+		return err
+	}
+	if active {
+		return ErrActiveRuleVersion
+	}
+
+	res, err := tx.Exec(`DELETE FROM rule_versions WHERE id = ?`, versionID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrRuleVersionNotFound
+	}
+
+	return tx.Commit()
+}
+
 // ListHandler handles GET /rules — returns all rule versions.
 func (s *Service) ListHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -216,6 +378,10 @@ func (s *Service) PublishHandler(userFromContext func(r *http.Request) (int, err
 			writeError(w, http.StatusBadRequest, "base_amounts is required")
 			return
 		}
+		if err := validatePublishRequest(req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
 		publishedBy, err := userFromContext(r)
 		if err != nil {
@@ -233,20 +399,111 @@ func (s *Service) PublishHandler(userFromContext func(r *http.Request) (int, err
 	}
 }
 
+// ActivateHandler handles POST /rules/{id}/activate.
+func (s *Service) ActivateHandler(w http.ResponseWriter, r *http.Request, versionID int) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	rv, err := s.Activate(versionID)
+	if err != nil {
+		if errors.Is(err, ErrRuleVersionNotFound) {
+			writeError(w, http.StatusNotFound, "rule version not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to activate rule version")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, rv)
+}
+
+// DeleteHandler handles DELETE /rules/{id}.
+func (s *Service) DeleteHandler(w http.ResponseWriter, r *http.Request, versionID int) {
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if err := s.Delete(versionID); err != nil {
+		if errors.Is(err, ErrRuleVersionNotFound) {
+			writeError(w, http.StatusNotFound, "rule version not found")
+			return
+		}
+		if errors.Is(err, ErrActiveRuleVersion) {
+			writeError(w, http.StatusConflict, "active rule version cannot be deleted")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to delete rule version")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Handler dispatches GET/POST for the /rules route to ListHandler /
 // PublishHandler respectively.
 func (s *Service) Handler(userFromContext func(r *http.Request) (int, error)) http.HandlerFunc {
 	publish := s.PublishHandler(userFromContext)
 	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			s.ListHandler(w, r)
-		case http.MethodPost:
-			publish(w, r)
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		path := strings.TrimPrefix(r.URL.Path, "/rules")
+		path = strings.Trim(path, "/")
+		if path == "" {
+			switch r.Method {
+			case http.MethodGet:
+				s.ListHandler(w, r)
+			case http.MethodPost:
+				publish(w, r)
+			default:
+				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			}
+			return
+		}
+
+		parts := strings.Split(path, "/")
+		if len(parts) == 2 && parts[1] == "activate" {
+			versionID, err := strconv.Atoi(parts[0])
+			if err != nil {
+				writeError(w, http.StatusNotFound, "not found")
+				return
+			}
+			s.ActivateHandler(w, r, versionID)
+			return
+		}
+		if len(parts) == 1 {
+			versionID, err := strconv.Atoi(parts[0])
+			if err != nil {
+				writeError(w, http.StatusNotFound, "not found")
+				return
+			}
+			s.DeleteHandler(w, r, versionID)
+			return
+		}
+
+		writeError(w, http.StatusNotFound, "not found")
+	}
+}
+
+func validatePublishRequest(payload PublishRequest) error {
+	for _, violationType := range RequiredViolationTypes {
+		amount, ok := payload.BaseAmounts[violationType]
+		if !ok {
+			return fmt.Errorf("missing base amount for violation type %q", violationType)
+		}
+		if amount <= 0 {
+			return fmt.Errorf("base amount for violation type %q must be greater than zero", violationType)
 		}
 	}
+
+	if _, err := payload.TimeMultipliers.NightStartHour.MinutesSinceMidnight(); err != nil {
+		return fmt.Errorf("night_start_hour: %w", err)
+	}
+	if _, err := payload.TimeMultipliers.NightEndHour.MinutesSinceMidnight(); err != nil {
+		return fmt.Errorf("night_end_hour: %w", err)
+	}
+
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
