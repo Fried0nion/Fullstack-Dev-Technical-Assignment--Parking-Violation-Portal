@@ -3,7 +3,8 @@
 This portal is a local-only demo built around a single Go process and a single SQLite file. The backend owns authentication, rule publication, violation ingestion, invoice generation, payment state, and member profile updates. The Next.js frontend is a separate client that talks to the backend over HTTP and stores the JWT locally for route guards.
 
 ## ERD
-<img width="821" height="1032" alt="ERD" src="https://github.com/user-attachments/assets/c7df1aaa-c520-45b6-b487-88c25c8da0a0" />
+<img width="971" height="1521" alt="ERD (1)" src="https://github.com/user-attachments/assets/dca8bc59-954a-42c2-adc4-17ac5025360f" />
+
 
 
 The important boundary is the invoice row. It stores the rule version and the calculated amounts at creation time, so later rule changes never rewrite old fines.
