@@ -743,41 +743,8 @@ On Windows with restricted permissions, run CMD as Administrator.
 
 ### High-Level Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Next.js Frontend (3000)                   │
-│  (React Components, JWT Storage, Role-Based Routes)         │
-└─────────────────┬───────────────────────────────────────────┘
-                  │ HTTP (REST API)
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Go Backend (8080)                           │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Routes (cmd/main.go)                                 │   │
-│  │ • /auth/login                                        │   │
-│  │ • /rules (officer-only)                             │   │
-│  │ • /violations (officer submit, all view)            │   │
-│  │ • /users/me (member profile)                        │   │
-│  │ • /payments (member-only)                           │   │
-│  │ • /uploads/* (file serving)                         │   │
-│  └──────────────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Services (internal/)                                 │   │
-│  │ • auth: JWT signing, validation, middleware         │   │
-│  │ • rules: Rule versioning                            │   │
-│  │ • violations: Submission + fine calculation         │   │
-│  │ • fines: Fine amount logic                          │   │
-│  │ • payments: Balance deduction, payment state        │   │
-│  │ • users: Member profile, balance management         │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────┬───────────────────────────────────────────┘
-                  │ SQL
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│              SQLite (portal.db)                              │
-│  • users • rule_versions • violations • invoices • payments  │
-└─────────────────────────────────────────────────────────────┘
-```
+<img width="1995" height="1242" alt="High-Level Architecture" src="https://github.com/user-attachments/assets/e58879cf-6f43-4ef1-9f49-0a52cbd0e3e0" />
+
 
 ### Key Design Principles
 
