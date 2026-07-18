@@ -1,6 +1,6 @@
 # Parking Violation Portal
 
-A full-stack demo application for managing parking violations. Built with **Go** (backend), **Next.js** (frontend), and **SQLite** (database). This project demonstrates authentication, rule management, violation submission, fine calculation, and payment processing.
+A full-stack demo application for managing parking violations, created as fast and simple as i can manage. Built with **Go** (backend), **Next.js** (frontend), and **SQLite** (database). This project demonstrates authentication, rule management, violation submission, fine calculation, and payment processing.
 
 **Status:** Local-only demo (single Go process, SQLite file-based database, no external services)
 
@@ -18,6 +18,10 @@ A full-stack demo application for managing parking violations. Built with **Go**
 - [Database & Schema](#database--schema)
 - [Troubleshooting](#troubleshooting)
 - [Architecture & Design](#architecture--design)
+- [Assumptions](#assumptions)
+- [Why It's Designed This Way](#why-its-designed-this-way)
+- [Trade-offs](#trade-offs)
+- [What I Would Do With More Time](#what-i-would-do-with-more-time)
 
 ---
 
@@ -822,7 +826,6 @@ For a full list of trade-offs, see `DESIGN.md`. Key points:
 
 ## Additional Resources
 
-- **Backend Design**: See `DESIGN.md` for data model, request flow, immutability strategy, and detailed trade-offs.
 - **Development History**: See `TASKS.md` for the step-by-step development process.
 - **Go Modules**: `go.mod` lists dependencies (modernc.org/sqlite, golang.org/x/crypto).
 - **Frontend Code**: TypeScript + React in `frontend/src/` with Next.js 15.
@@ -864,5 +867,118 @@ sqlite3 portal.db
 
 ---
 
-**Last updated**: July 17, 2026  
+## Assumptions
+
+- **Single reviewer/demo user at a time.** No concurrent load, no multi-tenant setup, no need for horizontal scaling.
+- **Trusted network.** The app runs on `localhost` only; there's no HTTPS, no CORS hardening, no rate limiting, no CSRF protection.
+- **Two fixed roles.** Only "officer" and "member" exist — no admin tier, no multi-officer permission levels, no ability to register new accounts through the UI (seeded via `seed.sql` only).
+- **One active rule version at a time.** Fine calculation always reads a single `is_active = 1` row; there is no scheduling of "this rule becomes active on date X."
+- **Currency is IDR, but stored as integers.** All amounts are stored as whole integers (no decimals/cents handling), since IDR has no subunit in common use.
+- **Photo upload is "best effort."** A violation photo is expected but not deeply validated (no virus scanning, no file-type allowlist beyond basic extension check, no image resizing/compression).
+- **Payment is fully mocked.** There is no real payment gateway; `scenario: success | failed` is chosen by the user in the UI to simulate both paths. No webhook, no idempotency key from an external provider.
+- **Clock trust.** Timestamps (violation time, "night" window, 90-day repeat-offender lookback) trust the server's local clock; there's no timezone normalization beyond what SQLite/Go provide by default.
+- **No horizontal file storage.** Photos live at `./uploads/` on disk, assumed to be the same machine the Go process runs on.
+
+---
+
+## Why It's Designed This Way
+
+### Single Go binary, internal packages per domain
+A single process with `internal/auth`, `internal/users`, `internal/rules`, `internal/violations`, `internal/fines`, `internal/payments` was chosen over microservices because:
+- The assignment is a demo, not a distributed system — one binary is faster to build, run, and reason about.
+- Domain boundaries are still enforced at the *code* level (Go's `internal/` visibility rules prevent cross-package reach-around), which demonstrates separation of concerns without the operational overhead of network calls between services.
+- Every cross-domain call (e.g. `violations` → `rules.GetActive()` → `fines.Calculate()`) is a plain Go function call, not an HTTP round-trip — so it's synchronous, transaction-friendly, and trivial to debug with a single stack trace.
+
+### SQLite instead of Postgres/MySQL
+- No DB server to install, configure, or tear down — matches the "runs locally, not deployed" requirement exactly.
+- `modernc.org/sqlite` (pure-Go driver) was used instead of `mattn/go-sqlite3` (cgo-based) specifically so the project builds on a fresh Windows machine **without** installing a C compiler (MinGW/TDM-GCC).
+- Schema is applied via `CREATE TABLE IF NOT EXISTS` on every startup instead of a formal migration tool (e.g. `golang-migrate`) — appropriate for a single-developer, single-environment demo; would not scale to a team with evolving schemas in production.
+
+### Rule versioning with immutable snapshots
+- Every invoice stores its own copy of `rule_version_id`, `base_amount`, `time_multiplier`, and `repeat_multiplier` at creation time, rather than joining live against the current active rule.
+- **Why:** if a rule is republished later, historical invoices must still reflect the rule that was active when the violation happened. This mirrors real-world regulatory/audit requirements (you can't retroactively change someone's fine because the city changed its fee schedule).
+- **Trade-off:** `rule_versions` rows are effectively append-only — publishing always inserts a new row and flips the old one's `is_active` to false.
+
+### JWT with 24h expiry, no refresh tokens
+- Simplifies the demo considerably: no refresh-token rotation, no token revocation list, no logout-everywhere flow.
+- **Trade-off:** a stolen token is valid for up to 24 hours with no way to revoke it early. Acceptable for a local demo; not acceptable for production.
+
+### Balance deduction ordering (deduct before mock charge)
+- `users.Service.DeductBalance` is called **before** `charge()` so that insufficient balance (`402`) is distinguishable from a mock provider failure (`failed` status), even though both ultimately mean "no money moved."
+- If the mock charge later reports `"failed"`, the balance deduction is rolled back — this models the real-world "authorize then confirm/void" pattern without needing a real payment processor.
+
+### Repeat-offender multiplier definition
+- "Unpaid" is defined as `status IN ('pending', 'failed')` within the last 90 days, explicitly **not** just `'pending'`. A failed payment attempt doesn't erase the violation — the plate is still a repeat offender until it's actually paid.
+
+### No automated tests
+- Manual curl/Postman verification per flow was chosen to keep the timeline focused on breadth across all 5 flows rather than test infrastructure.
+- **Trade-off:** no regression safety net; any future change requires re-walking all 5 flows by hand.
+
+---
+
+## Trade-offs
+
+| Area | Trade-off | Why acceptable for this demo |
+|---|---|---|
+| **Photo storage** | Saved to local disk `./uploads/`; if the DB insert fails after the file write, the photo is orphaned (never cleaned up) | No production traffic, no cost to leftover files, simpler code than a two-phase commit or cleanup job |
+| **Auth** | No refresh tokens, no revocation, 24h flat expiry | Local-only, single-session demo; revocation infra is unnecessary complexity |
+| **Concurrency** | SQLite is not built for high-concurrency production writes | Only one or two people using the app at once during a demo/review |
+| **Payments** | Fully mocked — no real gateway, no webhooks, no idempotency keys from a provider | The assignment explicitly calls for a mocked payment with a scenario selector, not real money movement |
+| **Validation** | Minimal input validation (e.g. photo file type, plate format) | Focus is on demonstrating the end-to-end flow, not hardening every input boundary |
+| **Schema migrations** | `CREATE TABLE IF NOT EXISTS` on every boot instead of versioned migrations | Single environment, single developer — no need to coordinate schema changes across people/environments |
+| **Security headers / CORS / HTTPS** | None configured | `localhost`-only, not deployed, not exposed to the internet |
+| **Error handling depth** | Orphaned files and some edge cases are documented rather than defensively coded around | Time-boxed assignment; documenting a trade-off is treated as equally valid to eliminating it |
+| **Frontend state** | Token stored in `localStorage`, no CSRF protection, no session cookies | Simplifies the demo frontend; would need to change for any real deployment |
+| **Timezones** | Relies on server-local time for "night" window and 90-day lookback | Single-machine demo; no multi-region users to account for |
+| **No register** | only two fixed roles for demonstration, therefore there's no need for registering and adding new accounts.   |
+
+---
+
+## What I Would Do With More Time
+
+The list below is roughly in the order I'd tackle it, earliest items are most top priority.
+
+### 4.1 Database: SQLite → Postgres
+- **What:** Move `portal.db` to a Postgres instance (Docker Compose locally, managed RDS/Cloud SQL in prod), introduce a real migration tool (`golang-migrate` or `atlas`) instead of `CREATE TABLE IF NOT EXISTS` on boot.
+- **Why now instead of later:** SQLite's single-writer lock means any two people using the app at once (an officer submitting a violation while a member pays) risk `database is locked` errors. This is the first thing that breaks under real usage.
+- **Also would add:** connection pooling (`pgxpool`), explicit transaction boundaries around the rule-publish flow and payment flow.
+
+### 4.2 Auth: sessions that can actually be revoked
+- **What:** Add a refresh-token flow (short-lived access token ~15 min + longer-lived refresh token stored server-side in a `sessions` table), move the JWT out of `localStorage` into an `httpOnly`, `Secure`, `SameSite=Strict` cookie.
+- **Why:** right now a leaked token is valid for a full 24 hours with zero way to kill it. I'd add a `POST /auth/logout` that actually invalidates server-side state, plus a "sign out of all devices" action for officers.
+- **Also would add:** password reset flow, account lockout after N failed logins, and moving `JWT_SECRET` out of the env-var default (`"dev-secret"`) into a proper secrets manager.
+
+### 4.3 Payments: real gateway integration
+- **What:** Swap the in-memory `charge()` mock for a real provider — Midtrans or Xendit, since this targets IDR (both have solid Go SDKs and sandbox modes).
+- **Why:** the mock hardcodes the outcome via a `scenario` field the client controls. A real integration means handling asynchronous webhooks, so I'd need to:
+  - Add a `pending_confirmation` invoice status between `pending` and `paid`/`failed`.
+  - Add webhook signature verification.
+  - Add idempotency keys so a retried webhook doesn't double-charge a balance.
+  - Add a reconciliation job that polls the provider for any payment whose webhook never arrived.
+
+### 4.4 File uploads: stop trusting local disk
+- **What:** Move photo storage from `./uploads/` to object storage (S3-compatible — S3 itself or MinIO for self-hosted), store only the object key in `violations.photo_path`.
+- **Why:** local disk doesn't survive a redeploy, doesn't scale past one machine, and the current "orphaned file on DB failure" trade-off is only acceptable because nothing depends on cleanup today. With more time I'd:
+  - Validate actual file content (magic-byte check, not just extension) and cap file size.
+  - Generate a pre-signed upload URL from the backend so large photos don't have to be proxied through the Go process.
+  - Add a scheduled job that diffs "files in storage" against "photo_path values in the DB" and deletes true orphans.
+
+### 4.5 Testing
+- **What:** Start with the highest-value, lowest-effort tests first — `fines.Calculate` is pure logic (no I/O) and is exactly the kind of function that silently breaks when someone tweaks a multiplier, so it'd get unit tests before anything else. Next would be an integration test for the full payment flow (insufficient balance → 402, success → paid + balance reduced, failure → rollback), since that flow has the most branching and the most money-related risk.
+- **Why last on the initial list despite being "first" in good practice:** for a time-boxed demo, breadth across all 5 flows mattered more than test coverage on any one of them — but this would be the very first thing added in week two of a real project.
+
+### 4.6 Network hardening
+- **What:** CORS allow-list (currently wide open since everything is `localhost`), HTTPS via a reverse proxy (Caddy/nginx) or a managed load balancer, rate limiting on `/auth/login` specifically (currently has zero brute-force protection) and more lightly on the rest of the API.
+- **Why:** none of this matters until the API is reachable from anywhere other than the same machine — but it's the last thing I'd do before any real exposure.
+
+### 4.7 Observability
+- **What:** Structured logging (currently ad-hoc `log.Println` calls), request IDs threaded through context, and basic metrics (request latency, payment success/failure rate) if this were ever handling real transactions.
+- **Why later:** invisible to a local demo reviewer, but the first thing I'd wish I had the moment this ran unattended for real users.
+
+### 4.8 Implementing registration feature
+- **What:** Adding new page and program to add new users with roles
+- **Why later:** To make sure the base app for demonstration is working perfectly before adding new users.
+---
+
+**Last updated**: July 18, 2026  
 **Version**: 1.0 (as-built)
